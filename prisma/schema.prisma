@@ -1,0 +1,466 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  GRACE_PERIOD
+  CANCELED
+}
+
+enum MimpiStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+  COMPLETED
+}
+
+enum CheckInType {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum CheckInStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  SUBMITTED
+}
+
+enum ApplicationStatus {
+  DRAFTED
+  SUBMITTED
+  REVIEWED
+  INTERVIEW
+  OFFER
+  REJECTED
+}
+
+enum NotificationType {
+  SYSTEM
+  CHECK_IN_REMINDER
+  TASK_DUE
+  MIMPI_UPDATE
+  SOCIAL
+}
+
+enum AiMode {
+  COACHING
+  BAHAS
+  AGEN
+  CURHAT
+  AUTO
+}
+
+// ─── User (mirrors auth.users) ───────────────────────────────────────────────
+
+model User {
+  id        String   @id @db.Uuid
+  email     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  profile          Profile?
+  blueprint        Blueprint?
+  mimpi            Mimpi[]
+  checkIns         CheckIn[]
+  applications     Application[]
+  subscription     Subscription?
+  surveyResponse   SurveyResponse?
+  posts            Post[]
+  notifications    Notification[]
+  sentNetworkEdges NetworkEdge[]   @relation("Requester")
+  rcvdNetworkEdges NetworkEdge[]   @relation("Recipient")
+  aiReports        AiReport[]
+  idempotencyKeys  IdempotencyKey[]
+  eventLogs        EventLog[]
+
+  @@map("users")
+}
+
+// ─── Profile ─────────────────────────────────────────────────────────────────
+
+model Profile {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String   @unique @db.Uuid @map("user_id")
+  displayName   String?  @map("display_name")
+  avatarUrl     String?  @map("avatar_url")
+  bio           String?
+  city          String?
+  country       String   @default("ID")
+  birthYear     Int?     @map("birth_year")
+  skorPengisian Int      @default(0) @map("skor_pengisian")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  experiences ProfileExperience[]
+  skills      ProfileSkill[]
+  educations  ProfileEducation[]
+
+  @@map("profiles")
+}
+
+model ProfileExperience {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profileId   String    @db.Uuid @map("profile_id")
+  title       String
+  company     String
+  startDate   DateTime  @map("start_date")
+  endDate     DateTime? @map("end_date")
+  description String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("profile_experiences")
+}
+
+model ProfileSkill {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profileId String @db.Uuid @map("profile_id")
+  name      String
+  level     Int    @default(1)
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, name])
+  @@map("profile_skills")
+}
+
+model ProfileEducation {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profileId   String   @db.Uuid @map("profile_id")
+  institution String
+  degree      String?
+  field       String?
+  startYear   Int      @map("start_year")
+  endYear     Int?     @map("end_year")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("profile_educations")
+}
+
+// ─── Blueprint ────────────────────────────────────────────────────────────────
+
+model Blueprint {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @unique @db.Uuid @map("user_id")
+  vision    String?
+  mission   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  priorities      Priority[]
+  timelineEntries TimelineEntry[]
+
+  @@map("blueprints")
+}
+
+model Priority {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  blueprintId String   @db.Uuid @map("blueprint_id")
+  title       String
+  description String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  blueprint Blueprint @relation(fields: [blueprintId], references: [id], onDelete: Cascade)
+
+  @@map("priorities")
+}
+
+model TimelineEntry {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  blueprintId String   @db.Uuid @map("blueprint_id")
+  title       String
+  targetDate  DateTime @map("target_date")
+  achieved    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  blueprint Blueprint @relation(fields: [blueprintId], references: [id], onDelete: Cascade)
+
+  @@map("timeline_entries")
+}
+
+// ─── Mimpi ────────────────────────────────────────────────────────────────────
+
+model Mimpi {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String      @db.Uuid @map("user_id")
+  title      String
+  objective  String?
+  status     MimpiStatus @default(DRAFT)
+  targetDate DateTime?   @map("target_date")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  curriculumItems   CurriculumItem[]
+  tasks             Task[]
+  progressLogs      ProgressLog[]
+  discussionThreads DiscussionThread[]
+
+  @@index([userId, status])
+  @@map("mimpi")
+}
+
+model CurriculumItem {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mimpiId     String   @db.Uuid @map("mimpi_id")
+  title       String
+  description String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  mimpi Mimpi  @relation(fields: [mimpiId], references: [id], onDelete: Cascade)
+  tasks Task[]
+
+  @@map("curriculum_items")
+}
+
+model Task {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mimpiId          String    @db.Uuid @map("mimpi_id")
+  curriculumItemId String?   @db.Uuid @map("curriculum_item_id")
+  title            String
+  description      String?
+  dueDate          DateTime? @map("due_date")
+  completedAt      DateTime? @map("completed_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  mimpi          Mimpi           @relation(fields: [mimpiId], references: [id], onDelete: Cascade)
+  curriculumItem CurriculumItem? @relation(fields: [curriculumItemId], references: [id], onDelete: SetNull)
+
+  @@index([mimpiId, dueDate])
+  @@map("tasks")
+}
+
+model ProgressLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mimpiId   String   @db.Uuid @map("mimpi_id")
+  note      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  mimpi Mimpi @relation(fields: [mimpiId], references: [id], onDelete: Cascade)
+
+  @@map("progress_logs")
+}
+
+model DiscussionThread {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mimpiId   String   @db.Uuid @map("mimpi_id")
+  userId    String   @db.Uuid @map("user_id")
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  mimpi Mimpi @relation(fields: [mimpiId], references: [id], onDelete: Cascade)
+
+  @@map("discussion_threads")
+}
+
+// ─── Check-In ─────────────────────────────────────────────────────────────────
+
+model CheckIn {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String        @db.Uuid @map("user_id")
+  type        CheckInType
+  status      CheckInStatus @default(NOT_STARTED)
+  periodStart DateTime      @map("period_start")
+  mood        Int?
+  confidence  Int?
+  focus       Int?
+  progress    Int?
+  blockers    String?
+  notes       String?
+  submittedAt DateTime?     @map("submitted_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, periodStart])
+  @@map("check_ins")
+}
+
+// ─── Application ──────────────────────────────────────────────────────────────
+
+model Application {
+  id            String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String            @db.Uuid @map("user_id")
+  opportunityId String?           @db.Uuid @map("opportunity_id")
+  companyName   String            @map("company_name")
+  roleName      String            @map("role_name")
+  status        ApplicationStatus @default(DRAFTED)
+  appliedAt     DateTime?         @map("applied_at")
+  notes         String?
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@map("applications")
+}
+
+// ─── Opportunity ──────────────────────────────────────────────────────────────
+
+model Opportunity {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String
+  company     String
+  location    String?
+  description String?
+  externalUrl String?   @map("external_url")
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  applications Application[]
+
+  @@map("opportunities")
+}
+
+// ─── Subscription ─────────────────────────────────────────────────────────────
+
+model Subscription {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String             @unique @db.Uuid @map("user_id")
+  status           SubscriptionStatus @default(PENDING)
+  midtransOrderId  String?            @unique @map("midtrans_order_id")
+  currentPeriodEnd DateTime?          @map("current_period_end")
+  canceledAt       DateTime?          @map("canceled_at")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+// ─── Survey ───────────────────────────────────────────────────────────────────
+
+model SurveyResponse {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @unique @db.Uuid @map("user_id")
+  answers     Json
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("survey_responses")
+}
+
+// ─── Social ───────────────────────────────────────────────────────────────────
+
+model Post {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @db.Uuid @map("user_id")
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("posts")
+}
+
+model NetworkEdge {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requesterId String   @db.Uuid @map("requester_id")
+  recipientId String   @db.Uuid @map("recipient_id")
+  accepted    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  requester User @relation("Requester", fields: [requesterId], references: [id], onDelete: Cascade)
+  recipient User @relation("Recipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, recipientId])
+  @@map("network_edges")
+}
+
+// ─── Notification ─────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String           @db.Uuid @map("user_id")
+  type      NotificationType
+  title     String
+  body      String?
+  readAt    DateTime?        @map("read_at")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+// ─── AI Report ───────────────────────────────────────────────────────────────
+
+model AiReport {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @db.Uuid @map("user_id")
+  mode           AiMode
+  progressScore  Int?     @map("progress_score")
+  characterScore Int?     @map("character_score")
+  mentalScore    Int?     @map("mental_score")
+  writtenAdvice  String?  @map("written_advice")
+  rawPrompt      String?  @map("raw_prompt")
+  rawResponse    String?  @map("raw_response")
+  generatedAt    DateTime @default(now()) @map("generated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, generatedAt])
+  @@map("ai_reports")
+}
+
+// ─── Idempotency ─────────────────────────────────────────────────────────────
+
+model IdempotencyKey {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @db.Uuid @map("user_id")
+  key       String
+  response  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+// ─── Event Log ───────────────────────────────────────────────────────────────
+
+model EventLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?  @db.Uuid @map("user_id")
+  eventType String   @map("event_type")
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([eventType, createdAt])
+  @@map("event_logs")
+}
